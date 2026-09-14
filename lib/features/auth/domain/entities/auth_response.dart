@@ -1,45 +1,37 @@
+/// Maps to the backend AuthResult record.
+/// status: "NEW_USER" or "EXISTING_USER"
 class AuthResponse {
   final bool success;
   final String message;
-  final String? token;
+  final String? accessToken;
+  final String? refreshToken;
   final int? userId;
-  final bool? profileCompleted;
-
-  // User detail fields
-  final String? name;
-  final String? mobileNumber;
-  final String? role;
-  final String? city;
-  final String? profilePicture;
-  final String? dob;
+  final String? status; // "NEW_USER" | "EXISTING_USER"
 
   const AuthResponse({
     required this.success,
     required this.message,
-    this.token,
+    this.accessToken,
+    this.refreshToken,
     this.userId,
-    this.profileCompleted,
-    this.name,
-    this.mobileNumber,
-    this.role,
-    this.city,
-    this.profilePicture,
-    this.dob,
+    this.status,
   });
+
+  bool get isNewUser => status == 'NEW_USER';
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
     return AuthResponse(
-      success: json['success'] ?? false,
-      message: json['message'] ?? '',
-      token: json['token'],
-      userId: json['userId'],
-      profileCompleted: json['profileCompleted'],
-      name: json['name'],
-      mobileNumber: json['mobileNumber'],
-      role: json['role'],
-      city: json['city'],
-      profilePicture: json['profilePicture'],
-      dob: json['dob'],
+      success: true,
+      message: '',
+      accessToken: json['accessToken'],
+      refreshToken: json['refreshToken'],
+      userId: json['userId'] is int
+          ? json['userId'] as int
+          : int.tryParse(json['userId']?.toString() ?? ''),
+      status: json['status'],
     );
   }
+
+  factory AuthResponse.error(String msg) =>
+      AuthResponse(success: false, message: msg);
 }

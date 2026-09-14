@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:truck_mate/core/network/api_constants.dart';
 import 'package:truck_mate/features/auth/presentation/screens/login_screen.dart';
+import 'package:truck_mate/features/auth/presentation/screens/profile_setup_screen.dart';
 import 'package:truck_mate/features/main_navigation_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -19,13 +22,11 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
-    // Adding a slight delay to allow the splash screen to render
     await Future.delayed(const Duration(milliseconds: 500));
-    
     if (!mounted) return;
-    
+
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('auth_token');
+    final token = prefs.getString('access_token');
 
     if (token == null || token.isEmpty) {
       _navigateToLogin();
@@ -33,7 +34,7 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     try {
-      // Decode JWT token to check expiration
+      // Decode JWT to check expiration
       final parts = token.split('.');
       if (parts.length != 3) {
         _navigateToLogin();
@@ -42,28 +43,57 @@ class _SplashScreenState extends State<SplashScreen> {
 
       final payloadString = _decodeBase64(parts[1]);
       final payloadMap = json.decode(payloadString);
-      
+
       if (payloadMap is Map<String, dynamic> && payloadMap.containsKey('exp')) {
         final exp = payloadMap['exp'] as int;
         final currentTime = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        
         if (exp < currentTime) {
-          // Token is expired
-          await prefs.remove('auth_token');
+          await prefs.remove('access_token');
           _navigateToLogin();
           return;
         }
       }
-      
-      // Token is valid and not expired
-      _navigateToHome();
-      
+
+      // Ask the backend if the profile is complete — source of truth
+      final profileDone = await _checkProfileCompletedFromBackend(token);
+      if (!mounted) return;
+      if (profileDone) {
+        _navigateToHome();
+      } else {
+        _navigateToProfileSetup();
+      }
     } catch (e) {
-      // On any parsing error, default to login
-      await prefs.remove('auth_token');
+      await prefs.remove('access_token');
       _navigateToLogin();
     }
   }
+
+  /// Calls GET /api/v1/profile and reads the profileCompleted field.
+  /// Returns true if the profile has been completed on the backend.
+  Future<bool> _checkProfileCompletedFromBackend(String token) async {
+    try {
+      final uri = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.profile}');
+      final resp = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as Map<String, dynamic>;
+        return data['profileCompleted'] == true;
+      }
+      // On error fall back to local flag so app doesn't break offline
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('profile_completed') ?? false;
+    } catch (_) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('profile_completed') ?? false;
+    }
+  }
+
 
   String _decodeBase64(String str) {
     String output = str.replaceAll('-', '+').replaceAll('_', '/');
@@ -89,12 +119,20 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 
+  void _navigateToProfileSetup() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const ProfileSetupScreen()),
+    );
+  }
+
   void _navigateToHome() {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {

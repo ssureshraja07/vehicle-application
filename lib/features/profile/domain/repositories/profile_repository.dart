@@ -1,10 +1,13 @@
-import '../entities/user_profile.dart';
-import '../entities/profile_post.dart';
+import '../entities/profile_entity.dart';
+import 'dart:io';
 
 abstract class ProfileRepository {
-  Future<UserProfile> getUserProfile();
-  Future<List<ProfilePost>> getUploadedPosts();
-  Future<UserProfile> toggleJoinMembership();
-  Future<void> uploadPost(ProfilePost post);
-  Future<bool> deletePost(String postId);
+  Future<ProfileEntity> getProfile();
+  Future<ProfileEntity> updateProfile({
+    required String name,
+    required int age,
+    required String role,
+    required String city,
+    File? profileImage,
+  });
 }

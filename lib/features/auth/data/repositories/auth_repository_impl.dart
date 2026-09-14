@@ -10,149 +10,159 @@ class AuthRepositoryImpl implements AuthRepository {
 
   AuthRepositoryImpl({http.Client? client}) : client = client ?? http.Client();
 
-  /// Saves auth token and user info to SharedPreferences
-  Future<void> _saveAuthData(AuthResponse response) async {
+  // ──────────────────────────────────────────────────────────────
+  // HELPERS
+  // ──────────────────────────────────────────────────────────────
+
+  Future<void> _saveTokens(AuthResponse resp) async {
     final prefs = await SharedPreferences.getInstance();
-    if (response.token != null) {
-      await prefs.setString('auth_token', response.token!);
+    if (resp.accessToken != null) {
+      await prefs.setString('access_token', resp.accessToken!);
     }
-    if (response.userId != null) {
-      await prefs.setInt('user_id', response.userId!);
+    if (resp.refreshToken != null) {
+      await prefs.setString('refresh_token', resp.refreshToken!);
     }
-    if (response.name != null) {
-      await prefs.setString('user_name', response.name!);
+    if (resp.userId != null) {
+      await prefs.setInt('user_id', resp.userId!);
     }
-    if (response.mobileNumber != null) {
-      await prefs.setString('user_mobile', response.mobileNumber!);
-    }
-    if (response.role != null) {
-      await prefs.setString('user_role', response.role!);
-    }
-    if (response.city != null) {
-      await prefs.setString('user_city', response.city!);
-    }
-    if (response.profilePicture != null) {
-      await prefs.setString('user_profile_picture', response.profilePicture!);
+    if (resp.status != null) {
+      await prefs.setString('auth_status', resp.status!);
     }
   }
 
-  @override
-  Future<AuthResponse> register({
-    required String name,
-    required String mobileNumber,
-    required DateTime dob,
-    required String role,
-  }) async {
-    try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.register}');
-      // Date format required: YYYY-MM-DD
-      final dobStr =
-          "${dob.year}-${dob.month.toString().padLeft(2, '0')}-${dob.day.toString().padLeft(2, '0')}";
+  Map<String, String> _jsonHeaders() => {'Content-Type': 'application/json'};
 
+  // ──────────────────────────────────────────────────────────────
+  // SEND OTP
+  // ──────────────────────────────────────────────────────────────
+
+  @override
+  Future<void> sendOtp(String phoneNumber) async {
+    final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.sendOtp}');
+    final response = await client
+        .post(
+          url,
+          headers: _jsonHeaders(),
+          body: json.encode({'phoneNumber': phoneNumber}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      final body = _tryDecodeBody(response.body);
+      throw Exception(body['message'] ?? 'Failed to send OTP (${response.statusCode})');
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // VERIFY OTP
+  // ──────────────────────────────────────────────────────────────
+
+  @override
+  Future<AuthResponse> verifyOtp(String phoneNumber, String otp) async {
+    try {
+      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.verifyOtp}');
       final response = await client
           .post(
             url,
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({
-              'name': name,
-              'mobileNumber': mobileNumber,
-              'dob': dobStr,
-              'role': role,
-            }),
+            headers: _jsonHeaders(),
+            body: json.encode({'phoneNumber': phoneNumber, 'otp': otp}),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final authResponse = AuthResponse.fromJson(data);
-        if (authResponse.success && authResponse.token != null) {
-          await _saveAuthData(authResponse);
-        }
-        return authResponse;
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final auth = AuthResponse.fromJson(data);
+        await _saveTokens(auth);
+        return auth;
       } else {
-        return AuthResponse(
-          success: false,
-          message: 'Server returned error: ${response.statusCode}',
-        );
+        final body = _tryDecodeBody(response.body);
+        return AuthResponse.error(
+            body['message'] ?? 'Invalid OTP (${response.statusCode})');
       }
     } catch (e) {
-      String errorMsg = 'Connection failed: $e';
-      if (e.toString().contains('TimeoutException') ||
-          e.toString().contains('timeout')) {
-        errorMsg =
-            'Connection timed out. Please check if the server is running and try again.';
-      }
-      return AuthResponse(success: false, message: errorMsg);
+      return AuthResponse.error(_connectionError(e));
     }
   }
 
+  // ──────────────────────────────────────────────────────────────
+  // REFRESH TOKEN
+  // ──────────────────────────────────────────────────────────────
+
   @override
-  Future<AuthResponse> loginWithPhoneNumber(String phoneNumber) async {
+  Future<AuthResponse> refreshAccessToken(String refreshToken) async {
     try {
-      final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.login}');
+      final url =
+          Uri.parse('${ApiConstants.baseUrl}${ApiConstants.refreshToken}');
       final response = await client
           .post(
             url,
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({'userMobile': phoneNumber}),
+            headers: _jsonHeaders(),
+            body: json.encode({'refreshToken': refreshToken}),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final authResponse = AuthResponse.fromJson(data);
-        if (authResponse.success && authResponse.token != null) {
-          await _saveAuthData(authResponse);
-        }
-        return authResponse;
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final auth = AuthResponse.fromJson(data);
+        await _saveTokens(auth);
+        return auth;
       } else {
-        return AuthResponse(
-          success: false,
-          message: 'Server returned error: ${response.statusCode}',
-        );
+        return AuthResponse.error('Session expired. Please log in again.');
       }
     } catch (e) {
-      String errorMsg = 'Connection failed: $e';
-      if (e.toString().contains('TimeoutException') ||
-          e.toString().contains('timeout')) {
-        errorMsg =
-            'Connection timed out. Please check if the server is running and try again.';
-      }
-      return AuthResponse(success: false, message: errorMsg);
+      return AuthResponse.error(_connectionError(e));
     }
   }
+
+  // ──────────────────────────────────────────────────────────────
+  // LOGOUT
+  // ──────────────────────────────────────────────────────────────
 
   @override
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('auth_token');
+    final refreshTok = prefs.getString('refresh_token');
 
-    // Call logout endpoint to invalidate token on backend
-    if (token != null && token.isNotEmpty) {
+    if (refreshTok != null && refreshTok.isNotEmpty) {
       try {
-        final url = Uri.parse('${ApiConstants.baseUrl}/api/auth/logout');
+        final url = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.logout}');
         await client
             .post(
               url,
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
+              headers: _jsonHeaders(),
+              body: json.encode({'refreshToken': refreshTok}),
             )
             .timeout(const Duration(seconds: 10));
-      } catch (e) {
-        // Even if backend call fails, proceed with local logout
-        print('Failed to call logout endpoint: $e');
+      } catch (_) {
+        // Proceed with local logout even if backend call fails
       }
     }
 
-    // Clear all local data
-    await prefs.remove('auth_token');
+    await prefs.remove('access_token');
+    await prefs.remove('refresh_token');
     await prefs.remove('user_id');
-    await prefs.remove('user_name');
-    await prefs.remove('user_mobile');
-    await prefs.remove('user_role');
-    await prefs.remove('user_city');
-    await prefs.remove('user_profile_picture');
+    await prefs.remove('auth_status');
+    await prefs.remove('profile_completed');
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // PRIVATE UTILITIES
+  // ──────────────────────────────────────────────────────────────
+
+  Map<String, dynamic> _tryDecodeBody(String body) {
+    try {
+      return json.decode(body) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  String _connectionError(Object e) {
+    final msg = e.toString();
+    if (msg.contains('TimeoutException') || msg.contains('timeout')) {
+      return 'Connection timed out. Is the server running?';
+    }
+    return 'Connection failed: $msg';
   }
 }
+
